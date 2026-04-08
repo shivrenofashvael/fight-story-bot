@@ -1,11 +1,9 @@
 # Start from the image that ALREADY has Flux dev fp8 + CLIP + VAE
 FROM runpod/worker-comfyui:5.8.5-flux1-dev-fp8
 
-# ── Install XLabs Flux ControlNet custom nodes ──
+# ── Install XLabs Flux ControlNet custom nodes (just clone — ComfyUI auto-loads) ──
 RUN cd /comfyui/custom_nodes && \
-    git clone https://github.com/XLabs-AI/x-flux-comfyui.git && \
-    cd x-flux-comfyui && \
-    pip install -e .
+    git clone https://github.com/XLabs-AI/x-flux-comfyui.git
 
 # ── Install ControlNet aux preprocessors (Canny, Depth, Lineart) ──
 RUN cd /comfyui/custom_nodes && \
