@@ -1,0 +1,23 @@
+# Generated images
+*.png
+*.jpg
+*.jpeg
+step*.png
+prog*.png
+tc_*.jpg
+source_*.jpg
+fight_gen_*.png
+test*.png
+
+# Config with secrets
+image-gen/config.json
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+
+# Claude
+.claude/
