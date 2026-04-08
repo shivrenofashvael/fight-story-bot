@@ -46,10 +46,13 @@ with open(os.path.join(SCRIPT_DIR, "config.json")) as f:
     CONFIG = json.load(f)
 
 with open(os.path.join(SCRIPT_DIR, "workflow_api.json")) as f:
-    WORKFLOW = json.load(f)
+    WORKFLOW_BASIC = json.load(f)
+with open(os.path.join(SCRIPT_DIR, "workflow_controlnet.json")) as f:
+    WORKFLOW_CN = json.load(f)
 
 RUNPOD_API_KEY = CONFIG["runpod_api_key"]
 ENDPOINT_ID = CONFIG["runpod_endpoint_id"]
+CN_ENDPOINT_ID = CONFIG.get("runpod_controlnet_endpoint_id", "")
 
 R2_ENDPOINT = CONFIG["r2_endpoint"]
 R2_BUCKET = CONFIG["r2_bucket"]
@@ -190,9 +193,10 @@ def canny_edge_detect(image_bytes):
 
 # ── RunPod API ──
 
-def runpod_request(method, path, data=None):
+def runpod_request(method, path, data=None, endpoint_id=None):
     """Make a request to the RunPod API."""
-    url = f"https://api.runpod.ai/v2/{ENDPOINT_ID}/{path}"
+    eid = endpoint_id or ENDPOINT_ID
+    url = f"https://api.runpod.ai/v2/{eid}/{path}"
     headers = {
         "Authorization": f"Bearer {RUNPOD_API_KEY}",
         "Content-Type": "application/json",
@@ -210,48 +214,11 @@ def download_image(url):
         return resp.read()
 
 
-def generate_image(image_url, positive_prompt, denoise=0.55, steps=28, guidance=3.5, seed=None):
-    """
-    Generate a styled fight image via RunPod Flux img2img.
-
-    Sends the original move image to Flux with moderate denoise (0.55)
-    to transform the style while preserving the fight pose.
-    """
-    if seed is None:
-        seed = random.randint(1, 2**31)
-
-    print(f"  Downloading source image...", file=sys.stderr)
-    image_bytes = download_image(image_url)
-    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-
-    workflow = copy.deepcopy(WORKFLOW)
-    workflow["6"]["inputs"]["text"] = positive_prompt
-    workflow["7"]["inputs"]["text"] = (
-        "female, woman, breasts, boobs, feminine, girl, cleavage, "
-        "deformed hands, extra fingers, mutated, disfigured, bad anatomy, "
-        "extra limbs, fused limbs, tangled limbs, blurry, watermark"
-    )
-    workflow["3"]["inputs"]["seed"] = seed
-    workflow["3"]["inputs"]["steps"] = steps
-    workflow["3"]["inputs"]["denoise"] = denoise
-    workflow["3"]["inputs"]["cfg"] = guidance
-
-    payload = {
-        "input": {
-            "workflow": workflow,
-            "images": [
-                {
-                    "name": "input.png",
-                    "image": image_b64,
-                }
-            ],
-        }
-    }
-
-    print(f"  Submitting to RunPod [Flux img2img] (steps={steps}, denoise={denoise}, guidance={guidance})...", file=sys.stderr)
-
+def _submit_and_poll(payload, endpoint_id=None, label=""):
+    """Submit a job to RunPod and poll for result."""
+    eid = endpoint_id or ENDPOINT_ID
     try:
-        result = runpod_request("POST", "runsync", payload)
+        result = runpod_request("POST", "runsync", payload, endpoint_id=eid)
         if result.get("status") == "COMPLETED":
             return extract_output(result)
     except urllib.error.HTTPError as e:
@@ -260,24 +227,89 @@ def generate_image(image_url, positive_prompt, denoise=0.55, steps=28, guidance=
         else:
             raise
 
-    # Async fallback
     print(f"  Sync timed out, using async...", file=sys.stderr)
-    result = runpod_request("POST", "run", payload)
+    result = runpod_request("POST", "run", payload, endpoint_id=eid)
     job_id = result["id"]
 
-    for attempt in range(120):  # up to 10 minutes (cold start can be slow)
+    for attempt in range(120):
         time.sleep(5)
-        status = runpod_request("GET", f"status/{job_id}")
+        status = runpod_request("GET", f"status/{job_id}", endpoint_id=eid)
         state = status.get("status")
         if state == "COMPLETED":
             return extract_output(status)
         elif state in ("FAILED", "CANCELLED"):
-            print(f"  Job {state}: {status.get('error', 'unknown')}", file=sys.stderr)
+            print(f"  [{label}] Job {state}: {status.get('error', 'unknown')}", file=sys.stderr)
             return None
-        print(f"  Status: {state} (attempt {attempt+1}/60)...", file=sys.stderr)
+        print(f"  [{label}] Status: {state} (attempt {attempt+1}/120)...", file=sys.stderr)
 
-    print(f"  Job timed out after 10 minutes", file=sys.stderr)
+    print(f"  [{label}] Job timed out after 10 minutes", file=sys.stderr)
     return None
+
+
+NEGATIVE_PROMPT = (
+    "female, woman, breasts, boobs, feminine, girl, cleavage, "
+    "deformed hands, extra fingers, mutated, disfigured, bad anatomy, "
+    "extra limbs, fused limbs, tangled limbs, blurry, watermark"
+)
+
+
+def generate_image(image_url, positive_prompt, denoise=0.55, steps=28, guidance=3.5,
+                   seed=None, cn_strength=0.85):
+    """
+    Generate a styled fight image via RunPod.
+
+    If ControlNet endpoint is configured → uses Canny ControlNet (preserves exact pose).
+    Otherwise → falls back to basic img2img (style change with some pose drift).
+    """
+    if seed is None:
+        seed = random.randint(1, 2**31)
+
+    print(f"  Downloading source image...", file=sys.stderr)
+    image_bytes = download_image(image_url)
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    # ── Try ControlNet first (best quality — preserves exact pose) ──
+    if CN_ENDPOINT_ID:
+        print(f"  Using ControlNet (cn_strength={cn_strength})...", file=sys.stderr)
+        workflow = copy.deepcopy(WORKFLOW_CN)
+        workflow["6"]["inputs"]["text"] = positive_prompt
+        workflow["7"]["inputs"]["text"] = NEGATIVE_PROMPT
+        workflow["3"]["inputs"]["seed"] = seed
+        workflow["3"]["inputs"]["steps"] = steps
+        workflow["3"]["inputs"]["cfg"] = guidance
+        workflow["25"]["inputs"]["strength"] = cn_strength
+
+        payload = {
+            "input": {
+                "workflow": workflow,
+                "images": [{"name": "input.png", "image": image_b64}],
+            }
+        }
+
+        print(f"  Submitting to RunPod [ControlNet Canny] (steps={steps}, cn={cn_strength})...", file=sys.stderr)
+        result = _submit_and_poll(payload, endpoint_id=CN_ENDPOINT_ID, label="CN")
+        if result:
+            return result
+        print(f"  ControlNet failed, falling back to basic img2img...", file=sys.stderr)
+
+    # ── Fallback: basic img2img ──
+    workflow = copy.deepcopy(WORKFLOW_BASIC)
+    workflow["6"]["inputs"]["text"] = positive_prompt
+    workflow["7"]["inputs"]["text"] = NEGATIVE_PROMPT
+    workflow["3"]["inputs"]["seed"] = seed
+    workflow["3"]["inputs"]["steps"] = steps
+    workflow["3"]["inputs"]["denoise"] = denoise
+    workflow["3"]["inputs"]["cfg"] = guidance
+
+    payload = {
+        "input": {
+            "workflow": workflow,
+            "images": [{"name": "input.png", "image": image_b64}],
+        }
+    }
+
+    print(f"  Submitting to RunPod [Flux img2img] (steps={steps}, denoise={denoise})...", file=sys.stderr)
+    return _submit_and_poll(payload, label="img2img")
 
 
 def extract_output(result):
