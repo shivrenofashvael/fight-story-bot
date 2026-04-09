@@ -1,17 +1,17 @@
-# Start from the image that ALREADY has Flux dev fp8 + CLIP + VAE
-FROM runpod/worker-comfyui:5.8.5-flux1-dev-fp8
+# SDXL Anime ControlNet — Animagine XL 3.1 + xinsir Canny ControlNet
+FROM runpod/worker-comfyui:5.8.5-base
 
-# ── Install XLabs Flux ControlNet custom nodes (just clone — ComfyUI auto-loads) ──
-RUN cd /comfyui/custom_nodes && \
-    git clone https://github.com/XLabs-AI/x-flux-comfyui.git
+# ── Download Animagine XL 3.1 anime checkpoint ──
+RUN wget -q -O /comfyui/models/checkpoints/animagine-xl-3.1.safetensors \
+    "https://huggingface.co/cagliostrolab/animagine-xl-3.1/resolve/main/animagine-xl-3.1.safetensors"
 
-# ── Install ControlNet aux preprocessors (Canny, Depth, Lineart) ──
+# ── Download xinsir ControlNet Canny SDXL ──
+RUN mkdir -p /comfyui/models/controlnet && \
+    wget -q -O /comfyui/models/controlnet/controlnet-canny-sdxl.safetensors \
+    "https://huggingface.co/xinsir/controlnet-canny-sdxl-1.0/resolve/main/diffusion_pytorch_model.safetensors"
+
+# ── Install ControlNet aux preprocessors (Canny, Depth, etc.) ──
 RUN cd /comfyui/custom_nodes && \
     git clone https://github.com/Fannovel16/comfyui_controlnet_aux.git && \
     cd comfyui_controlnet_aux && \
     pip install -r requirements.txt
-
-# ── Download XLabs Flux ControlNet Canny model (~3.6GB) ──
-RUN mkdir -p /comfyui/models/xlabs/controlnets && \
-    wget -q -O /comfyui/models/xlabs/controlnets/flux-canny-controlnet-v3.safetensors \
-    "https://huggingface.co/XLabs-AI/flux-controlnet-collections/resolve/main/flux-canny-controlnet-v3.safetensors"

@@ -1,4 +1,4 @@
-name: Build ComfyUI + ControlNet Image
+name: Build SDXL Anime ControlNet Image
 
 on:
   workflow_dispatch:  # manual trigger
@@ -37,6 +37,6 @@ jobs:
           context: ./image-gen/deploy
           file: ./image-gen/deploy/Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/comfyui-flux-controlnet:latest
+          tags: ghcr.io/${{ github.repository_owner }}/comfyui-sdxl-anime:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

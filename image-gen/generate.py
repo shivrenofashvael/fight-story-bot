@@ -49,10 +49,13 @@ with open(os.path.join(SCRIPT_DIR, "workflow_api.json")) as f:
     WORKFLOW_BASIC = json.load(f)
 with open(os.path.join(SCRIPT_DIR, "workflow_controlnet.json")) as f:
     WORKFLOW_CN = json.load(f)
+with open(os.path.join(SCRIPT_DIR, "workflow_sdxl_controlnet.json")) as f:
+    WORKFLOW_SDXL = json.load(f)
 
 RUNPOD_API_KEY = CONFIG["runpod_api_key"]
 ENDPOINT_ID = CONFIG["runpod_endpoint_id"]
 CN_ENDPOINT_ID = CONFIG.get("runpod_controlnet_endpoint_id", "")
+SDXL_ENDPOINT_ID = CONFIG.get("runpod_sdxl_endpoint_id", "")
 
 R2_ENDPOINT = CONFIG["r2_endpoint"]
 R2_BUCKET = CONFIG["r2_bucket"]
@@ -252,14 +255,26 @@ NEGATIVE_PROMPT = (
     "extra limbs, fused limbs, tangled limbs, blurry, watermark"
 )
 
+# Animagine XL works best with quality tags + danbooru-style prompts
+SDXL_NEGATIVE_PROMPT = (
+    "nsfw, lowres, (bad), text, error, fewer, extra, missing, "
+    "worst quality, jpeg artifacts, low quality, watermark, unfinished, "
+    "displeasing, oldest, early, chromatic aberration, signature, "
+    "extra digits, artistic error, username, scan, abstract, "
+    "female, woman, breasts, feminine, girl, "
+    "bad anatomy, bad hands, deformed, extra limbs, fused limbs"
+)
+
 
 def generate_image(image_url, positive_prompt, denoise=0.55, steps=28, guidance=3.5,
                    seed=None, cn_strength=0.85):
     """
     Generate a styled fight image via RunPod.
 
-    If ControlNet endpoint is configured → uses Canny ControlNet (preserves exact pose).
-    Otherwise → falls back to basic img2img (style change with some pose drift).
+    Priority:
+    1. SDXL Anime ControlNet (best for anime — sharp output + pose preservation)
+    2. Flux ControlNet (pose preservation but blurry anime)
+    3. Flux basic img2img (fallback — style OK but limbs can tangle)
     """
     if seed is None:
         seed = random.randint(1, 2**31)
@@ -268,15 +283,19 @@ def generate_image(image_url, positive_prompt, denoise=0.55, steps=28, guidance=
     image_bytes = download_image(image_url)
     image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
-    # ── Try ControlNet first (best quality — preserves exact pose) ──
-    if CN_ENDPOINT_ID:
-        print(f"  Using ControlNet (cn_strength={cn_strength})...", file=sys.stderr)
-        workflow = copy.deepcopy(WORKFLOW_CN)
-        workflow["6"]["inputs"]["text"] = positive_prompt
-        workflow["7"]["inputs"]["text"] = NEGATIVE_PROMPT
+    # ── Try SDXL Anime ControlNet first (best quality for anime) ──
+    if SDXL_ENDPOINT_ID:
+        print(f"  Using SDXL Anime ControlNet (cn={cn_strength}, denoise={denoise})...", file=sys.stderr)
+        workflow = copy.deepcopy(WORKFLOW_SDXL)
+
+        # Animagine XL prompt format: quality tags + description
+        sdxl_prompt = f"masterpiece, best quality, very aesthetic, absurdres, {positive_prompt}"
+        workflow["6"]["inputs"]["text"] = sdxl_prompt
+        workflow["7"]["inputs"]["text"] = SDXL_NEGATIVE_PROMPT
         workflow["3"]["inputs"]["seed"] = seed
         workflow["3"]["inputs"]["steps"] = steps
-        workflow["3"]["inputs"]["cfg"] = guidance
+        workflow["3"]["inputs"]["cfg"] = 7.0  # SDXL needs higher CFG than Flux
+        workflow["3"]["inputs"]["denoise"] = denoise
         workflow["25"]["inputs"]["strength"] = cn_strength
 
         payload = {
@@ -286,11 +305,38 @@ def generate_image(image_url, positive_prompt, denoise=0.55, steps=28, guidance=
             }
         }
 
-        print(f"  Submitting to RunPod [ControlNet Canny] (steps={steps}, cn={cn_strength})...", file=sys.stderr)
+        print(f"  Submitting to RunPod [SDXL Anime ControlNet] (steps={steps}, cn={cn_strength})...", file=sys.stderr)
+        result = _submit_and_poll(payload, endpoint_id=SDXL_ENDPOINT_ID, label="SDXL")
+        if result:
+            return result
+        print(f"  SDXL ControlNet failed, trying Flux ControlNet...", file=sys.stderr)
+
+    # ── Try Flux ControlNet (preserves pose but quality varies) ──
+    if CN_ENDPOINT_ID:
+        print(f"  Using Flux ControlNet (cn_strength={cn_strength})...", file=sys.stderr)
+        workflow = copy.deepcopy(WORKFLOW_CN)
+        workflow["6"]["inputs"]["text"] = positive_prompt
+        workflow["7"]["inputs"]["text"] = NEGATIVE_PROMPT
+        workflow["3"]["inputs"]["noise_seed"] = seed
+        workflow["3"]["inputs"]["steps"] = steps
+        workflow["3"]["inputs"]["timestep_to_start_cfg"] = steps
+        workflow["3"]["inputs"]["true_gs"] = guidance
+        workflow["3"]["inputs"]["image_to_image_strength"] = denoise
+        workflow["3"]["inputs"]["denoise_strength"] = 1.0
+        workflow["25"]["inputs"]["strength"] = cn_strength
+
+        payload = {
+            "input": {
+                "workflow": workflow,
+                "images": [{"name": "input.png", "image": image_b64}],
+            }
+        }
+
+        print(f"  Submitting to RunPod [Flux ControlNet] (steps={steps}, cn={cn_strength})...", file=sys.stderr)
         result = _submit_and_poll(payload, endpoint_id=CN_ENDPOINT_ID, label="CN")
         if result:
             return result
-        print(f"  ControlNet failed, falling back to basic img2img...", file=sys.stderr)
+        print(f"  Flux ControlNet failed, falling back to basic img2img...", file=sys.stderr)
 
     # ── Fallback: basic img2img ──
     workflow = copy.deepcopy(WORKFLOW_BASIC)
