@@ -45,6 +45,7 @@
       "detect_hand": "enable",
       "detect_body": "enable",
       "detect_face": "enable",
+      "scale_stick_for_xinsr_cn": "enable",
       "resolution": 1024
     }
   },
