@@ -51,6 +51,8 @@ with open(os.path.join(SCRIPT_DIR, "workflow_controlnet.json")) as f:
     WORKFLOW_CN = json.load(f)
 with open(os.path.join(SCRIPT_DIR, "workflow_sdxl_controlnet.json")) as f:
     WORKFLOW_SDXL = json.load(f)
+with open(os.path.join(SCRIPT_DIR, "workflow_sdxl_dual_cn.json")) as f:
+    WORKFLOW_SDXL_DUAL = json.load(f)
 
 RUNPOD_API_KEY = CONFIG["runpod_api_key"]
 ENDPOINT_ID = CONFIG["runpod_endpoint_id"]
@@ -285,8 +287,14 @@ def generate_image(image_url, positive_prompt, denoise=0.55, steps=28, guidance=
 
     # ── Try SDXL Anime ControlNet first (best quality for anime) ──
     if SDXL_ENDPOINT_ID:
-        print(f"  Using SDXL Anime ControlNet (cn={cn_strength}, denoise={denoise})...", file=sys.stderr)
-        workflow = copy.deepcopy(WORKFLOW_SDXL)
+        # Use dual ControlNet workflow (Canny + OpenPose) for maximum pose lock
+        use_dual = True
+        if use_dual:
+            print(f"  Using SDXL Dual ControlNet [Canny+OpenPose] (denoise={denoise})...", file=sys.stderr)
+            workflow = copy.deepcopy(WORKFLOW_SDXL_DUAL)
+        else:
+            print(f"  Using SDXL Anime ControlNet (cn={cn_strength}, denoise={denoise})...", file=sys.stderr)
+            workflow = copy.deepcopy(WORKFLOW_SDXL)
 
         # Animagine XL prompt format: quality tags + description
         sdxl_prompt = f"masterpiece, best quality, very aesthetic, absurdres, {positive_prompt}"
@@ -294,9 +302,16 @@ def generate_image(image_url, positive_prompt, denoise=0.55, steps=28, guidance=
         workflow["7"]["inputs"]["text"] = SDXL_NEGATIVE_PROMPT
         workflow["3"]["inputs"]["seed"] = seed
         workflow["3"]["inputs"]["steps"] = steps
-        workflow["3"]["inputs"]["cfg"] = 7.0  # SDXL needs higher CFG than Flux
+        workflow["3"]["inputs"]["cfg"] = 8.0  # Optimal for SDXL anime
         workflow["3"]["inputs"]["denoise"] = denoise
-        workflow["25"]["inputs"]["strength"] = cn_strength
+        workflow["3"]["inputs"]["sampler_name"] = "dpmpp_2m_sde"
+        workflow["3"]["inputs"]["scheduler"] = "karras"
+
+        if use_dual:
+            workflow["25"]["inputs"]["strength"] = cn_strength  # Canny
+            workflow["26"]["inputs"]["strength"] = cn_strength * 0.9  # OpenPose slightly lower
+        else:
+            workflow["25"]["inputs"]["strength"] = cn_strength
 
         payload = {
             "input": {
@@ -305,8 +320,9 @@ def generate_image(image_url, positive_prompt, denoise=0.55, steps=28, guidance=
             }
         }
 
-        print(f"  Submitting to RunPod [SDXL Anime ControlNet] (steps={steps}, cn={cn_strength})...", file=sys.stderr)
-        result = _submit_and_poll(payload, endpoint_id=SDXL_ENDPOINT_ID, label="SDXL")
+        label = "SDXL-Dual" if use_dual else "SDXL"
+        print(f"  Submitting to RunPod [{label}] (steps={steps}, cn={cn_strength})...", file=sys.stderr)
+        result = _submit_and_poll(payload, endpoint_id=SDXL_ENDPOINT_ID, label=label)
         if result:
             return result
         print(f"  SDXL ControlNet failed, trying Flux ControlNet...", file=sys.stderr)
