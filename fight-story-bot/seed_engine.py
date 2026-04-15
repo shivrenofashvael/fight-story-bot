@@ -151,6 +151,7 @@ def get_move_images(move_name, limit=8, male_only=True, fallback_category=None):
         data = supabase_get("move_images", params)
 
     # 3. Fallback category: combine male_male AND not_checked to maximize variety
+    # Only if fallback_category is explicitly set on the move.
     if not data and fallback_category:
         fb_male = _query_images(fallback_category, male_only=True)
         fb_unchecked_params = {
@@ -168,10 +169,8 @@ def get_move_images(move_name, limit=8, male_only=True, fallback_category=None):
                 seen.add(key)
                 data.append(r)
 
-    # 5. Primary category, any gender (last resort)
-    if not data:
-        data = _query_images(cat, male_only=False)
-
+    # NO last-resort pulls from has_female / unclear images. If nothing clean
+    # exists, return empty — the story proceeds without images for that move.
     if not data:
         return []
     return random.sample(data, limit) if len(data) > limit else data
