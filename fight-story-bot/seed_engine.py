@@ -76,7 +76,7 @@ def get_character(name):
 def get_compatible_moves(strength, technique):
     return supabase_get("moves", {
         "mrs": f"lte.{strength}", "mrt": f"lte.{technique}",
-        "select": "id,name,description,tags,hints,mrs,mrt,severity,forces_outcome,is_finisher,can_be_partial",
+        "select": "id,name,description,tags,hints,mrs,mrt,severity,forces_outcome,is_finisher,can_be_partial,image_fallback_category",
         "limit": "100",
     })
 
@@ -113,38 +113,65 @@ def get_character_images(name, limit=6):
     return spread
 
 
-def get_move_images(move_name, limit=8, male_only=True):
-    """Fetch move images, filtered to male_male by default.
-
-    Returns more images than before (8 instead of 5) so the bot has more
-    variety to choose from when syncing images to story moments.
-    """
-    cat = move_name.lower().replace(" ", "_").replace("-", "_")
+def _query_images(category_pattern, male_only, limit=100):
     params = {
-        "move_category": f"ilike.%{cat}%",
+        "move_category": f"ilike.%{category_pattern}%",
         "select": "public_url,move_name,move_category,gender_check,tags",
-        "limit": "100",
+        "limit": str(limit),
     }
-    # Prefer male_male, but fall back if nothing tagged yet
     if male_only:
         params["gender_check"] = "eq.male_male"
-    data = supabase_get("move_images", params)
+    return supabase_get("move_images", params)
+
+
+def get_move_images(move_name, limit=8, male_only=True, fallback_category=None):
+    """Fetch move images, filtered to male_male by default.
+
+    Cascade:
+    1. Primary category + male_male
+    2. Primary category + not_checked (tolerated until classifier runs)
+    3. Fallback category (from moves.image_fallback_category) + male_male
+    4. Fallback category + not_checked
+    5. Primary category, any gender (last resort)
+    Returns empty list if nothing matches anywhere.
+    """
+    cat = move_name.lower().replace(" ", "_").replace("-", "_")
+
+    # 1. Primary + male_male
+    data = _query_images(cat, male_only=True) if male_only else _query_images(cat, male_only=False)
+
+    # 2. Primary + not_checked
     if not data and male_only:
-        # Fallback 1: by move_name
-        params["move_name"] = f"ilike.%{move_name}%"
-        params.pop("move_category", None)
-        data = supabase_get("move_images", params)
-    if not data and male_only:
-        # Fallback 2: not_checked images (tolerated until classifier runs)
-        params["gender_check"] = "eq.not_checked"
-        data = supabase_get("move_images", params)
-    if not data:
-        # Final fallback: whatever matches by category, no gender filter
-        data = supabase_get("move_images", {
+        params = {
             "move_category": f"ilike.%{cat}%",
+            "gender_check": "eq.not_checked",
             "select": "public_url,move_name,move_category,gender_check,tags",
-            "limit": "50",
-        })
+            "limit": "100",
+        }
+        data = supabase_get("move_images", params)
+
+    # 3. Fallback category: combine male_male AND not_checked to maximize variety
+    if not data and fallback_category:
+        fb_male = _query_images(fallback_category, male_only=True)
+        fb_unchecked_params = {
+            "move_category": f"ilike.%{fallback_category}%",
+            "gender_check": "eq.not_checked",
+            "select": "public_url,move_name,move_category,gender_check,tags",
+            "limit": "100",
+        }
+        fb_unchecked = supabase_get("move_images", fb_unchecked_params)
+        seen = set()
+        data = []
+        for r in fb_male + fb_unchecked:
+            key = r.get("public_url")
+            if key and key not in seen:
+                seen.add(key)
+                data.append(r)
+
+    # 5. Primary category, any gender (last resort)
+    if not data:
+        data = _query_images(cat, male_only=False)
+
     if not data:
         return []
     return random.sample(data, limit) if len(data) > limit else data
@@ -416,7 +443,10 @@ def run_selection(character_name, mode, rounds=3, move_name=None):
 
     results = []
     for r, move in enumerate(selected_moves):
-        imgs = get_move_images(move["name"], limit=8, male_only=True)
+        imgs = get_move_images(
+            move["name"], limit=8, male_only=True,
+            fallback_category=move.get("image_fallback_category"),
+        )
         pattern = select_pattern(history)
         archetype = select_archetype(history)
 
