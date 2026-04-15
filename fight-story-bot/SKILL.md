@@ -9,210 +9,194 @@ First-person fight fiction. Pouria is the victim. One story per request.
 
 ## STEP 1: RUN THE ENGINE
 
-```python
+```bash
 python seed_engine.py --character "{CHARACTER_NAME}" --mode story
 ```
 
 If user specifies a move: `--move "Figure-4 Headscissors"`
 
-## STEP 2: LEARN FROM PAST FEEDBACK (DO THIS FIRST — BEFORE ANYTHING ELSE)
+The engine returns a structured JSON with numbered `▶▶▶_STEP_*` sections. Process them **in order**.
 
-The engine output starts with `▶▶▶_STEP_1_FEEDBACK_FIRST` and `feedback_lessons` at the TOP of the JSON. This is intentional — feedback comes BEFORE everything because it is the MOST IMPORTANT input.
+## STEP 2: READ THE PERSISTENT LESSONS (`persistent_lessons`)
+
+These are PERMANENT RULES distilled from every piece of feedback Pouria has ever given. They live in the `lessons` table and persist across every session.
 
 **You MUST:**
-1. Read EVERY lesson in `feedback_lessons.lessons[]`
-2. For each lesson, state what concrete action you will take in THIS story
-3. Output your full feedback plan BEFORE choosing an image or writing a single word
+1. Read EVERY rule in `persistent_lessons.rules_by_category`
+2. For each rule relevant to this story, state what concrete action you will take
+3. Output your lessons-applied plan BEFORE anything else
 
 ```
-**Feedback from Pouria's previous stories:**
-Total feedback entries in database: [feedback_lessons.total_feedback_entries]
-
-**How I'm applying each lesson:**
-1. "[KEEP/STOP DOING lesson text]" → I will [specific action in this story]
-2. "[KEEP/STOP DOING lesson text]" → I will [specific action in this story]
+**Active Rules Applied to This Story:**
+- [writing_style/critical] "No clothing contradictions" → I will re-verify outfit before every clothing mention
+- [move_logic/important] "Finishers must end the fight" → The finisher move at the end will result in the declared outcome
+- [pacing/important] "Don't telegraph moves" → I will not foreshadow what's coming
 ...
 ```
 
-**If `feedback_lessons` is null or empty**, output:
+If `persistent_lessons` is null → output: `**No persistent rules yet — this story will establish a baseline.**`
+
+## STEP 3: DISTILL UNPROCESSED FEEDBACK (`unprocessed_feedback`)
+
+These are recent feedback entries that haven't been promoted to permanent rules yet. For EACH unprocessed entry:
+
+1. Extract ONE or more concrete, actionable rules.
+2. Categorize each rule: `writing_style | pacing | move_logic | image_choice | character_voice | move_mechanics | story_structure | other`
+3. Rate severity: `critical` (must never violate) | `important` (strong preference) | `minor` (nice to have)
+4. Promote it to a permanent rule using:
+
+```bash
+python seed_engine.py --add-lesson \
+  --category "<CATEGORY>" \
+  --severity "<SEVERITY>" \
+  --rule "<CONCISE, ACTIONABLE RULE>" \
+  --from-feedback "<FEEDBACK_ID>"
 ```
-**Feedback check:** No feedback entries found in database. Proceeding without feedback constraints.
+
+The rule text should be:
+- Concise (1 sentence max)
+- Actionable (describes what TO do or NOT to do)
+- Decontextualized (applies to any future story, not just the one that generated the feedback)
+
+**Example:**
+- Raw feedback: "Pouria walked away at the end, it was anticlimactic"
+- Distilled rule: "Every story must end with Pouria decisively defeated or escaping — never a neutral walk-away."
+- Category: `story_structure`, Severity: `critical`
+
+After distilling, the feedback gets marked `processed = true` automatically. Next run, only NEW feedback will appear in `unprocessed_feedback`.
+
+If `unprocessed_feedback` is null → skip this step.
+
+## STEP 4: CHOOSE CHARACTER IMAGE — OUTFIT IS LOCKED FROM THIS PHOTO
+
+The engine returns `character_images[]` — 5-6 photos in different outfits/settings. **Look at all of them.** Pick the one that best matches the story you're about to write.
+
+Output:
+
 ```
-
-### How to apply feedback:
-- "STOP DOING: character just walked away at the end" → Write a decisive ending (knockout, slam, submission — not a walk-away)
-- "STOP DOING: outfit from config used instead of chosen image" → Only describe what you SEE in the chosen photo
-- "STOP DOING: move names as section headers" → Never reveal move names until the hold is fully locked in
-- "KEEP DOING: Cross Lock was a surprise" → Choose unexpected moves, don't telegraph what's coming
-- "STOP DOING: bare toes while wearing shoes" → Adapt move mechanics to the actual outfit
-
-Apply these lessons to your DECISIONS (setting, pacing, move execution, ending style), not to your WORDS. Don't quote feedback in the story itself. But you MUST show your feedback plan before anything else.
-
-**VERIFICATION:** If you wrote the story without outputting a feedback plan first, DELETE IT and start over.
-
-## STEP 3: CHOOSE THE BEST CHARACTER IMAGE — OUTFIT IS LOCKED FROM THIS PHOTO
-
-The engine returns `character_images[]` — an array of 5-6 different photos of this character in different outfits/settings. **Look at ALL of them.** Then pick the one that best fits the story you're about to write — consider the setting, mood, and moves.
-
-Output your choice:
-
-```
-**Chosen image:** [URL of the image you picked]
-**Outfit from photo:** [Describe EVERY visible clothing item, shoes, accessories, colors, and details you see in this specific photo]
-**Build/features:** [Build, physique, notable features visible in this photo]
-**Why this one:** [1 sentence — e.g. "gym setting matches the fight location"]
+**Chosen image:** [URL]
+**Outfit from photo:** [Every visible clothing item, color, texture]
+**Build/features:** [Visible physique and notable features]
+**Why this one:** [1 sentence]
 ```
 
 ### OUTFIT LOCK (NON-NEGOTIABLE)
 
-The outfit you describe from this chosen photo is the **ONLY** outfit for the entire story. There is NO outfit field in the character data — it has been removed. The character data has a NOTE confirming this. The ONLY source of outfit information is this photo.
+- The character has NO default outfit. The DB's `outfit` column is excluded on purpose.
+- The ONLY outfit is what you SEE in the chosen photo.
+- Never invent "white shorts," "black trunks," or any clothing not in the photo.
+- If the photo shows sneakers → sneakers throughout. If barefoot → barefoot throughout.
+- If a move mechanic references bare skin but the photo shows clothing there, ADAPT the mechanic (friction through fabric, etc.) — do NOT strip the clothing.
+- Re-read the outfit description before every clothing mention in the prose.
+
+## STEP 5: WRITE THE STORY
+
+### 5a. The move `description` field is PURE MECHANICS. You MUST write fresh prose.
+
+Every move in `rounds[]` has a `description` that reads like a forensic anatomy report — body positions, grips, force vectors, anatomical targets, physiological timings. It is NOT prose. It is NOT how the story should read.
+
+**YOUR JOB:** Read the mechanics, VISUALIZE the move perfectly, then invent prose that makes the reader feel it. Fresh metaphors. Fresh sensory language. Fresh rhythm.
+
+**DO NOT:**
+- Copy phrases from the `description` field.
+- Recycle metaphors from previous stories.
+- Use "he didn't push, he just guided my head down" or any phrasing that has appeared before — invent new ones every story.
+
+**DO:**
+- Let the mechanics be a skeleton. Your prose is the flesh.
+- Vary sentence length — short punches for sudden violence, long sentences for the slow build of a lock tightening.
+- Describe sensation (pressure, temperature, taste of iron, loss of vision) not just action.
+
+### 5b. FINISHER & SEVERITY RULES (READ CAREFULLY)
+
+Each move has these fields:
+- `severity`: `light | medium | heavy | lethal`
+- `forces_outcome`: `none | unconscious | broken_limb | incapacitated | death`
+- `is_finisher`: true/false — if true, this move ends the fight when fully executed
+- `can_be_partial`: true/false — can it be aborted mid-execution?
+
+The LAST round has `is_finisher_round: true/false`.
 
 **Rules:**
-1. Look at the chosen image. Describe exactly what the character is wearing — every item, color, texture.
-2. This is the outfit for the ENTIRE story. Every clothing reference must match this photo.
-3. Do NOT invent clothing items not visible in the photo. Do NOT add "white shorts", "black trunks", or any generic defaults. There is NO default outfit anywhere.
-4. If the photo shows sneakers → the character wears sneakers throughout. If barefoot → barefoot throughout.
-5. If a move description mentions bare skin contact but the photo shows clothing on that area, adapt the move description to account for the clothing — do NOT remove the clothing to fit the move.
-6. Re-read your outfit description before every clothing mention in the story. If it doesn't match, fix it.
 
-**OUTFIT SELF-CHECK:** After writing the story, scan every clothing mention. If ANY item was not in your "Outfit from photo" description, that's a violation — fix it before outputting.
+1. **If the final round's move is `is_finisher: true` AND `is_finisher_round: true`** → the fight MUST END on this move. Declared outcome happens. Pouria does not survive and stand up. If `forces_outcome: death` → Pouria dies. If `unconscious` → Pouria is knocked out. If `broken_limb` → a limb breaks. If `incapacitated` → Pouria cannot continue, curls up/goes limp.
 
-Show the chosen image to Pouria at the start of the story. Show it AGAIN mid-story when the character's outfit is relevant (adjusting clothes, standing over Pouria, etc.).
+2. **If a mid-sequence move has `forces_outcome != 'none'`** → you MUST show it as PARTIAL. The move is aborted, escaped, or loosened before full completion. Explicitly narrate the reason the full outcome did NOT occur (character slipped, Pouria bit down, character released to enjoy the fear, etc.). Otherwise the fight should already be over and subsequent moves are impossible.
 
-## STEP 4: WRITE THE STORY
+3. **If `can_be_partial: false`** and the move is NOT the final move → do NOT soften the mechanic. Show an explicit external reason the full outcome was interrupted (earthquake, referee, character's showmanship pause — whatever fits).
 
-**The two things that CANNOT change:**
+4. **Cumulative damage** — the body tracks damage:
+   - After 1 heavy move: opponent is visibly impaired (slower, bleeding, ragged breath).
+   - After 2 heavy moves: opponent is barely functional (cannot stand without help, vision tunneling).
+   - After a finisher-level move that was interrupted: opponent is at the edge of consciousness.
+   - Pouria's internal narration reflects this. He gets weaker, slower, foggier with each round.
 
-1. **Move mechanics** — each move's `description` defines exactly what happens physically. The body positions, the lock, the pressure points. Follow them. A Body Scissors wraps the torso. A Piledriver lifts and slams. A Face Stomp is a foot on the face. Don't turn every move into a headscissors.
+5. **NEVER use move names as section headers.** First person, Pouria doesn't know the move name at the start. Reveal it inline, AFTER the hold is completely locked, as dawning realization: `"...and as his thigh bone grinds across my carotid I finally understand — a figure-four."`
 
-2. **Character personality** — the `tone`, `aggression`, `dominance`, `showmanship` fields define who this person is. An aggressive character is violent and fast. A calm character is eerily relaxed. A teenage character talks like a teenager. Read the fields. Become that person.
+6. **Length:** 1500-3000 words. First person, present tense, Pouria's voice.
 
-**Everything else is yours.** Setting, mood, pacing, structure, vocabulary, sentence length, psychological angle, how the fight starts, how it ends — be creative. Surprise Pouria. Don't write the same story twice.
+### 5c. IMAGE PLACEMENT — SYNC WITH POSITIONING
 
-The story uses ALL the moves from `rounds[]` as a sequence. Each move flows into the next — but **NEVER use move names as section headers**. No "ROUND 1: TRIANGLE CHOKE" — in first person, Pouria doesn't know the move name until it's fully locked in. Reveal the move name only after the hold is completely set up, inline in the prose.
+The engine returns **up to 8 move images per round** (filtered to `gender_check = male_male` — no females). You also have 5-6 character images.
 
-**IMAGE PLACEMENT — USE IMAGES AGGRESSIVELY:**
+**Per move — choose images that match the exact moment in the prose:**
 
-Images are the visual backbone of the story. The reader should feel like they're watching the fight, not just reading about it. Every major moment needs a visual.
+- When Pouria first sees the character standing over him → character image, full-body.
+- When the hold is being SET UP → move image where the hold is also being set up (entry phase, not locked yet).
+- When the hold is FULLY LOCKED → move image where the hold is clearly locked in.
+- When pressure is MAXIMUM / Pouria is about to break → move image with the most intense-looking position.
+- Between moves, during the character's swagger / walk / taunt → another character image.
 
-**Character images — show the chosen image frequently:**
-- At the START of the story (introducing the character)
-- When the character stands up between moves, adjusts clothing, taunts, or looks down at Pouria
-- During transitions between moves (character walking around, flexing, cracking knuckles)
-- At the ENDING (character standing over defeated Pouria, walking away, etc.)
-- Target: 3-4 character image appearances minimum across the story
+**Don't paste random move images in order — match the image to the story beat.** Scan the 8 options, pick the ones where the bodies in the photo visually correspond to what Pouria is experiencing at that sentence.
 
-**Move images — show them during the action:**
-- Show 1 move image as the hold is being set up (BEFORE naming the move)
-- Show 1-2 more move images as the hold tightens, the character adjusts, or pressure increases
-- Show a move image during the transition INTO the next move (reader sees the position forming)
-- Target: 2-3 move images per move = 6-9 move images for 3 rounds
+**Quantity targets:**
+- 3-5 character image appearances across the story (start, transitions, ending).
+- 3-4 move images per round (setup → lock → tighten → aftermath).
+- Total: 12-17 images per story.
+- Never more than 250 words without an image.
 
-**Total target: 10-14 images per story.** With 3 rounds:
-- 3-4 character image appearances (start + transitions + ending)
-- 2-3 move images per round = 6-9 move images
-- Every 150-250 words should have an image nearby
-- NEVER go more than 300 words without an image
+**Format:** inline markdown `![](URL)` with a blank line before and after.
 
-**Format:** Show images inline with the prose using markdown: `![](URL)`
+## STEP 6: ENDING
 
-Write from Pouria's first-person perspective. 1500-3000 words.
+If the finisher landed → Pouria's narration STOPS at the moment of loss. He doesn't describe the character walking away unless the finisher was `unconscious` (then a dream-like fade-out). If `death` → final sentence is mid-thought cutting off, or black.
 
-## STEP 4.5: GENERATE & VALIDATE STYLED IMAGES
-
-Generate **styled versions** of move images that match the story's visual tone. Every generated image MUST pass validation before being used.
-
-### How to generate
-
-```bash
-python image-gen/generate.py \
-  --image-url "{MOVE_IMAGE_URL}" \
-  --style "{STYLE}" \
-  --outfit "{OUTFIT_FROM_CHOSEN_PHOTO}" \
-  --move "{WHAT_IS_HAPPENING_PHYSICALLY}" \
-  --mood "{MOOD}" \
-  --denoise 0.55
-```
-
-### Parameters
-
-- `--image-url`: The original move image URL (or a previously generated image for continuation)
-- `--style`: `anime`, `dark_anime`, `manga`, `cinematic`, `dark_fantasy`, `comic`, `neon`, `gritty`
-- `--outfit`: The outfit you described from the chosen character photo (ONLY for the executioner/attacker)
-- `--move`: What's happening physically — "triangle choke locked tight, thighs squeezing around neck"
-- `--mood`: Comma-separated: `intense`, `dark`, `brutal`, `suffocating`, `dominant`, `desperate`, `calm_menace`
-- `--denoise`: 0.55 = standard restyle, 0.35 = continuation/evolution (lower = more preserved)
-
-### IMAGE VALIDATION AGENT (MANDATORY)
-
-After EVERY generated image, you MUST view it and run these 4 checks:
-
-**CHECK 1 — ANATOMY:** Are the limbs clear and natural? No tangled, fused, or extra limbs. Hands should have 5 fingers. Bodies should look anatomically plausible.
-
-**CHECK 2 — MALE ONLY:** Both fighters MUST be clearly male. Flat masculine chests, no breasts, no feminine features. If either character looks female or ambiguous, REJECT.
-
-**CHECK 3 — MOVE MATCH:** Does the image match the CURRENT moment in the story? If the story says "triangle choke," the image must show legs wrapped around the neck area, ground position. If it shows a standing punch instead, REJECT.
-
-**CHECK 4 — EVOLUTION:** If this is a continuation image (not the first), does it show visible change from the previous image? Tighter squeeze, more strain, changed expression, etc.
-
-**Validation output format:**
-```
-[IMAGE VALIDATION]
-CHECK 1 (anatomy): PASS/FAIL — [reason]
-CHECK 2 (male): PASS/FAIL — [reason]
-CHECK 3 (move match): PASS/FAIL — [reason]
-CHECK 4 (evolution): PASS/N/A — [reason]
-VERDICT: USE / REGENERATE
-```
-
-**If any check FAILS:**
-1. Adjust the prompt (add "flat male chest, muscular" / fix the move description / add "no extra limbs")
-2. Change the seed: `--seed {RANDOM_NUMBER}`
-3. Regenerate and validate again
-4. Max 3 attempts per image — after 3 fails, use the original move photo as fallback
-
-### When to generate
-
-1. **First move setup** — Original move image at denoise 0.55. Sets the visual tone.
-2. **Tightening/escalation** — Use the PREVIOUSLY GENERATED image as input, denoise 0.35, updated mood.
-3. **Transitions** — New move image at denoise 0.55.
-4. **Climax** — Final move image with dramatic mood, denoise 0.55.
-
-### Story continuation (same hold, evolving)
-
-When a hold tightens, feed the last generated image BACK as input with lower denoise:
-
-```bash
-# Step 1: generate from original move image
-python image-gen/generate.py --image-url "ORIGINAL_MOVE_IMG" --style "dark_anime" --move "triangle choke setup, legs wrapping around neck" --denoise 0.55
-# → validate → produces IMAGE_1_URL
-
-# Step 2: evolve from generated image (tighter)
-python image-gen/generate.py --image-url "IMAGE_1_URL" --style "dark_anime" --move "triangle choke squeezing harder, thighs clamping down, opponent's face strained" --denoise 0.35
-# → validate → produces IMAGE_2_URL
-
-# Step 3: even tighter
-python image-gen/generate.py --image-url "IMAGE_2_URL" --style "dark_anime" --move "triangle choke at maximum pressure, opponent barely conscious, legs locked like a vice" --denoise 0.35
-# → validate → produces IMAGE_3_URL
-```
-
-### Fallback
-
-If generation fails (RunPod error, timeout) or all 3 attempts fail validation, use the original move image as-is. Never block the story on image generation.
-
-## MODES
-
-- **Story** — default, described above
-- **Photo** — user uploads an image, that IS the visual reference
-- **Roleplay** — you ARE the character, Pouria types his own dialogue
-- **Fight** — shorter rounds, 300-500 words each
-- **Persian** — if input is Persian, write in colloquial Persian
+If the story ends with a deliberate walk-away / declaration by the character → that's for the finisher's `forces_outcome` = `incapacitated` or when Pouria is still conscious but broken.
 
 ## AFTER THE STORY
 
 Ask:
 ```
-How was this? (1-5) | What worked? | What didn't?
+How was this? (1-5) | What worked? | What didn't? | Category? (writing_style/pacing/move_logic/image_choice/character_voice/move_mechanics/story_structure/other)
 ```
 
-Then: `python seed_engine.py --log-feedback --rating {N} --worked "{text}" --didnt "{text}"`
+Log it:
+```bash
+python seed_engine.py --log-feedback \
+  --rating {N} \
+  --worked "{text}" \
+  --didnt "{text}" \
+  --category "{CATEGORY}" \
+  --severity "{critical|important|minor}" \
+  --story-id "{STORY_ID_FROM_ENGINE_OUTPUT}"
+```
+
+Then DISTILL it into a permanent rule immediately (see STEP 3). The bot learns permanently; feedback doesn't vanish into logs.
+
+## MODES
+
+- **Story** — default, described above.
+- **Photo** — user uploads an image, that IS the visual reference (skip the character-image choice step, use the upload).
+- **Roleplay** — you ARE the character, Pouria types his own dialogue.
+- **Fight** — shorter rounds, 300-500 words each.
+- **Persian** — if input is Persian, write in colloquial Persian.
+
+## MAINTENANCE COMMANDS
+
+```bash
+# List all active persistent rules
+python seed_engine.py --list-lessons
+
+# Retire a rule (when it's contradicted or obsolete)
+python seed_engine.py --retire-lesson "<LESSON_ID>"
+```
