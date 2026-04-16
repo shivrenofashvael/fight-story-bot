@@ -276,58 +276,30 @@ def build_notes(history, feedback):
 
 
 def build_lessons_block(lessons):
-    """Format persistent lessons for system-prompt injection."""
+    """Active truth-rules only. Style rules shouldn't live here."""
     if not lessons:
         return None
-    by_cat = {}
-    for l in lessons:
-        cat = l.get("category") or "other"
-        by_cat.setdefault(cat, []).append(l)
-
-    formatted = {
-        "MANDATORY_READ": (
-            "These are PERMANENT RULES distilled from every piece of feedback Pouria has ever given. "
-            "Every rule here is non-negotiable. If a rule applies to this story, you MUST follow it. "
-            "If you violate a rule, the story is INVALID."
-        ),
-        "total_active_rules": len(lessons),
-        "rules_by_category": {
-            cat: [
-                {"severity": l.get("severity"), "rule": l.get("rule"), "times_applied": l.get("times_applied", 0)}
-                for l in ls
-            ]
-            for cat, ls in by_cat.items()
-        },
-    }
-    return formatted
+    return [
+        {"category": l.get("category"), "severity": l.get("severity"), "rule": l.get("rule")}
+        for l in lessons
+    ]
 
 
 def build_unprocessed_feedback_block(unprocessed):
-    """Raw feedback that hasn't been distilled into lessons yet."""
+    """Raw feedback not yet distilled. Only promote to a lesson if it's a TRUTH constraint
+    (outfit / gender / mechanics / finisher logic). Style preferences should not be promoted."""
     if not unprocessed:
         return None
-    return {
-        "MANDATORY_DISTILL": (
-            "These are RECENT FEEDBACK entries that have NOT yet been distilled into permanent lessons. "
-            "BEFORE writing this story, you MUST: (1) apply them to this story, AND (2) call "
-            "`python seed_engine.py --add-lesson --category <CAT> --severity <SEV> --rule \"<RULE>\" "
-            "--from-feedback <FEEDBACK_ID>` to promote each one into a permanent rule. "
-            f"Categories: {', '.join(FEEDBACK_CATEGORIES)}. Severities: critical/important/minor."
-        ),
-        "feedback_entries": [
-            {
-                "id": fb.get("id"),
-                "rating": fb.get("rating"),
-                "category": fb.get("category"),
-                "severity": fb.get("severity"),
-                "what_worked": fb.get("what_worked"),
-                "what_didnt": fb.get("what_didnt"),
-                "notes": fb.get("notes"),
-                "created_at": fb.get("created_at"),
-            }
-            for fb in unprocessed
-        ],
-    }
+    return [
+        {
+            "id": fb.get("id"),
+            "rating": fb.get("rating"),
+            "category": fb.get("category"),
+            "what_worked": fb.get("what_worked"),
+            "what_didnt": fb.get("what_didnt"),
+        }
+        for fb in unprocessed
+    ]
 
 
 def log_story(character_name, mode, moves_list, pattern, archetype, image_urls):
@@ -480,50 +452,8 @@ def run_selection(character_name, mode, rounds=3, move_name=None):
         increment_lesson_usage([l["id"] for l in lessons])
 
     output = {
-        "▶▶▶_STEP_1_PERSISTENT_LESSONS": "═══════════════════════════════════════════════════",
-        "PERSISTENT_LESSONS_INSTRUCTIONS": (
-            "These are PERMANENT RULES distilled from every feedback Pouria has ever given. "
-            "You MUST treat each one as non-negotiable. Before writing anything, output a "
-            "'Lessons Applied' section showing how each rule affects your decisions for THIS story."
-        ),
         "persistent_lessons": build_lessons_block(lessons),
-
-        "▶▶▶_STEP_2_UNPROCESSED_FEEDBACK": "═══════════════════════════════════════════════════",
         "unprocessed_feedback": build_unprocessed_feedback_block(unprocessed_fb),
-
-        "▶▶▶_STEP_3_CHOOSE_CHARACTER_IMAGE": "═══════════════════════════════════════════════════",
-        "character_images": char_urls,
-        "IMAGE_CHOICE_INSTRUCTIONS": (
-            "Look at ALL character images above. Pick the one that best fits the story you will write. "
-            "Describe EVERY clothing item visible. This is the ONLY outfit for the entire story."
-        ),
-
-        "▶▶▶_STEP_4_OUTFIT_LOCK": "═══════════════════════════════════════════════════",
-        "OUTFIT_LOCK_RULES": [
-            "The character has NO default outfit. The 'outfit' column in the DB is EXCLUDED on purpose.",
-            "The ONLY outfit is what you SEE in the chosen photo.",
-            "Do NOT invent clothing not visible in the photo.",
-            "If a move mechanic references bare skin but photo shows clothing there, ADAPT the mechanic.",
-            "VIOLATION = writing any clothing item you did not describe from the chosen photo.",
-        ],
-
-        "▶▶▶_STEP_5_STORY_STRUCTURE": "═══════════════════════════════════════════════════",
-        "FINISHER_RULES": [
-            "The LAST move in `rounds[]` is marked with `is_finisher_round: true` if it is a finisher.",
-            "If is_finisher_round is true, the fight MUST END on that move. No surviving. No standing back up.",
-            "forces_outcome tells you WHAT happens: unconscious = knocked out, broken_limb = limb breaks, incapacitated = can't continue, death = dies, none = continues.",
-            "If a move with forces_outcome != 'none' appears in MID-sequence (not last), it MUST be shown as PARTIAL / aborted / escaped — otherwise the fight is over and later moves are impossible.",
-            "If can_be_partial is false and the move is NOT the final move, something is wrong — do not soften it, but show an explicit reason the full outcome didn't occur (interruption, loss of grip, etc.).",
-            "Cumulative damage: after a 'heavy' move, the opponent is visibly impaired. After two 'heavy' moves, they are barely functional.",
-        ],
-        "WRITING_STYLE_RULES": [
-            "The move `description` field is PURE MECHANICS (what happens to bodies, anatomically). It is NOT prose. You MUST write fresh prose that conveys these mechanics — DO NOT copy phrases from the description.",
-            "Never repeat metaphors across stories. Every physical sensation, every moment of dread, every stance description should be invented fresh.",
-            "NEVER use move names as section headers. Reveal the move name inline, AFTER the hold is fully locked, as Pouria's dawning realization.",
-            "First person, present tense, from Pouria's perspective.",
-        ],
-
-        "▶▶▶_STEP_6_CHARACTER_DATA": "═══════════════════════════════════════════════════",
         "character": {
             "name": character.get("name"),
             "characteristics": character.get("characteristics"),
@@ -536,12 +466,11 @@ def run_selection(character_name, mode, rounds=3, move_name=None):
             "dominance": character.get("dominance"),
             "showmanship": character.get("showmanship"),
             "finisher": character.get("finisher"),
-            "NOTE": "No outfit field — outfit comes only from the chosen image.",
         },
+        "character_images": char_urls,
         "primary_character_image": primary,
         "compatible_moves_available": len(compatible),
         "style_examples": style,
-        "anti_repetition_notes": build_notes(history, unprocessed_fb),
         "mode": mode,
         "story_id": story_id,
         "rounds": results,
