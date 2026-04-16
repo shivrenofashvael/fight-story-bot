@@ -11,6 +11,7 @@ test*.png
 
 # Config with secrets
 image-gen/config.json
+fight-story-bot/config.json
 
 # Python
 __pycache__/
@@ -21,3 +22,6 @@ __pycache__/
 
 # Claude
 .claude/
+
+# Embedded git repo — handle separately
+upload-page/
